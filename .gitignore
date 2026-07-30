@@ -1,0 +1,8 @@
+node_modules
+dist
+.DS_Store
+*.local
+
+# Local reference checkouts (not needed to build/run the app)
+vault/
+web-unified-docs/
