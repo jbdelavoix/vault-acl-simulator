@@ -80,8 +80,6 @@ export function relevantCapabilitiesForPath(path: string): Capability[] | null {
   const set = new Set<Capability>();
 
   const known = KNOWN_ENDPOINT_CAPS[path];
-  if (known) for (const c of known) set.add(c);
-
   const patterned = findSysEndpointForPath(path);
 
   if (patterned) {
@@ -90,12 +88,14 @@ export function relevantCapabilitiesForPath(path: string): Capability[] | null {
     if (patterned.root) set.add("sudo");
   }
 
-  if (!patterned && known) {
-    for (const rootPat of SYS_ROOT_PATHS) {
-      if (patternToRegex(rootPat).test(path)) {
-        set.add("sudo");
-        break;
-      }
+  if (known) {
+    for (const c of known) set.add(c);
+  }
+
+  for (const rootPat of SYS_ROOT_PATHS) {
+    if (patternToRegex(rootPat).test(path)) {
+      set.add("sudo");
+      break;
     }
   }
 
@@ -155,8 +155,22 @@ export function ruleTouchesRootProtected(rule: PathRule): string | null {
         return rootPat.includes("*") || rootPat.includes("+") ? rootPat : example;
       }
     }
-    // Exact policy path equals the root pattern itself (e.g. path "sys/auth/*")
     if (rule.path === rootPat) return rootPat;
+  }
+
+  // Exact (or segment-wildcard) policy paths that are themselves root-protected
+  // requests — e.g. path "sys/raw/foo" under root pattern sys/raw/*.
+  const selfPaths: string[] = [];
+  if (!rule.isPrefix && !rule.hasSegmentWildcards) {
+    selfPaths.push(rule.path);
+  } else if (rule.hasSegmentWildcards) {
+    selfPaths.push(rule.path.replace(/\+/g, "x").replace(/\*$/, "y"));
+  }
+
+  for (const candidate of selfPaths) {
+    for (const rootPat of SYS_ROOT_PATHS) {
+      if (patternToRegex(rootPat).test(candidate)) return rootPat;
+    }
   }
 
   return null;
@@ -200,6 +214,7 @@ export function lintRules(rules: PathRule[]): Diagnostic[] {
     const relevant = relevantCapabilitiesForPath(rule.path);
     if (relevant) {
       const useful = new Set(relevant);
+      if (rootHit) useful.add("sudo");
       const unused = rule.capabilities.filter((c) => !useful.has(c));
       if (unused.length > 0) {
         diagnostics.push({
@@ -208,7 +223,7 @@ export function lintRules(rules: PathRule[]): Diagnostic[] {
           params: {
             path: rule.path,
             unused: unused.join(", "),
-            useful: relevant.join(", "),
+            useful: [...useful].join(", "),
           },
           line: rule.line,
           path: rule.path,
@@ -219,7 +234,7 @@ export function lintRules(rules: PathRule[]): Diagnostic[] {
     const catalog = findSysEndpointForPath(rule.path);
     if (catalog?.deprecated) {
       diagnostics.push({
-        severity: "warning",
+        severity: "info",
         code: "deprecated_path",
         params: { path: catalog.path },
         line: rule.line,
@@ -227,13 +242,13 @@ export function lintRules(rules: PathRule[]): Diagnostic[] {
       });
     } else if (catalog?.legacy) {
       diagnostics.push({
-        severity: "warning",
+        severity: "info",
         code: "legacy_path",
         params: { path: catalog.path },
         line: rule.line,
         path: rule.path,
       });
-    } else if (/^[^/]+\/(token|key)\/[^/]+$/.test(rule.path)) {
+    } else if (/^gcp\/(token|key)\/[^/]+$/.test(rule.path)) {
       // GCP secrets engine legacy shapes (prefer roleset/<name>/token|key).
       diagnostics.push({
         severity: "warning",

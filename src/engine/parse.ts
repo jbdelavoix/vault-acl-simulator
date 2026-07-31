@@ -22,10 +22,70 @@ function lineOf(source: string, index: number): number {
 
 function stripComments(source: string): string {
   // Preserve length and newlines so indices/line numbers stay aligned with source.
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
-    .replace(/(^|[^:])\/\/[^\n]*/g, (m, prefix: string) => `${prefix}${" ".repeat(m.length - prefix.length)}`)
-    .replace(/(^|[^"'])#[^\n]*/g, (m, prefix: string) => `${prefix}${" ".repeat(m.length - prefix.length)}`);
+  // Must be string-aware: path globs like "foo/*/bar" contain /* and */ and must
+  // not be treated as block comments (otherwise mid-* paths vanish and never lint).
+  const out = source.split("");
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i];
+
+    if (ch === '"' || ch === "'") {
+      const quote = ch;
+      i++;
+      while (i < source.length) {
+        if (source[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (source[i] === quote) {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+
+    if (ch === "/" && source[i + 1] === "*") {
+      out[i] = " ";
+      out[i + 1] = " ";
+      i += 2;
+      while (i < source.length) {
+        if (source[i] === "\n") {
+          i++;
+          continue;
+        }
+        if (source[i] === "*" && source[i + 1] === "/") {
+          out[i] = " ";
+          out[i + 1] = " ";
+          i += 2;
+          break;
+        }
+        out[i] = " ";
+        i++;
+      }
+      continue;
+    }
+
+    if (ch === "/" && source[i + 1] === "/" && source[i - 1] !== ":") {
+      while (i < source.length && source[i] !== "\n") {
+        out[i] = " ";
+        i++;
+      }
+      continue;
+    }
+
+    if (ch === "#") {
+      while (i < source.length && source[i] !== "\n") {
+        out[i] = " ";
+        i++;
+      }
+      continue;
+    }
+
+    i++;
+  }
+  return out.join("");
 }
 
 function extractStringList(raw: string): string[] {

@@ -53,6 +53,47 @@ describe("parsePolicy", () => {
     expect(diagnostics.some((d) => d.code === "unsupported_policy_attr")).toBe(true);
     expect(rules[0].capabilities).toEqual([]);
   });
+
+  it("rejects mid-path * on every block (does not treat /* in strings as comments)", () => {
+    const { diagnostics, rules } = parsePolicy(`path "kv-*/config" {
+  capabilities = ["read"]
+}
+path "foo/*/bar" {
+  capabilities = ["read"]
+}
+path "foo/*/bar/*/baz" {
+  capabilities = ["list"]
+}
+path "ok/*" {
+  capabilities = ["read"]
+}
+`);
+    expect(rules.map((r) => r.path)).toEqual([
+      "kv-*/config",
+      "foo/*/bar",
+      "foo/*/bar/*/baz",
+      "ok/*",
+    ]);
+    const stars = diagnostics.filter((d) => d.code === "star_position");
+    expect(stars).toHaveLength(3);
+    expect(stars.map((d) => d.path)).toEqual([
+      "kv-*/config",
+      "foo/*/bar",
+      "foo/*/bar/*/baz",
+    ]);
+  });
+
+  it("still strips real /* */ comments outside strings", () => {
+    const { rules, diagnostics } = parsePolicy(`/* ignore
+this */
+path "secret/data/*" {
+  capabilities = ["read"]
+}
+`);
+    expect(rules).toHaveLength(1);
+    expect(rules[0].path).toBe("secret/data/*");
+    expect(diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+  });
 });
 
 describe("matchPath", () => {

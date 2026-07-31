@@ -70,7 +70,7 @@ path "sys/policy/*" {
   capabilities = ["read"]
 }
 `);
-    expect(diagnostics.some((d) => d.code === "legacy_path")).toBe(true);
+    expect(diagnostics.some((d) => d.code === "legacy_path" && d.severity === "info")).toBe(true);
   });
 
   it("warns on deprecated gcp token path shape", () => {
@@ -79,7 +79,21 @@ path "gcp/token/my-roleset" {
   capabilities = ["read"]
 }
 `);
-    expect(diagnostics.some((d) => d.code === "deprecated_path")).toBe(true);
+    expect(diagnostics.some((d) => d.code === "deprecated_path" && d.severity === "warning")).toBe(
+      true,
+    );
+  });
+
+  it("does not flag auth/token or keymgmt/key as deprecated gcp shapes", () => {
+    const { diagnostics } = parsePolicy(`
+path "auth/token/create" {
+  capabilities = ["update"]
+}
+path "keymgmt/key/my-key" {
+  capabilities = ["read"]
+}
+`);
+    expect(diagnostics.filter((d) => d.code === "deprecated_path")).toEqual([]);
   });
 });
 
@@ -95,5 +109,32 @@ describe("ruleTouchesRootProtected", () => {
       line: 1,
     });
     expect(hit).toBe("sys/rotate");
+  });
+
+  it("detects concrete paths under a root wildcard (sys/raw/foo)", () => {
+    const hit = ruleTouchesRootProtected({
+      path: "sys/raw/foo",
+      matchPath: "sys/raw/foo",
+      capabilities: ["read"],
+      isPrefix: false,
+      hasSegmentWildcards: false,
+      isTemplated: false,
+      line: 1,
+    });
+    expect(hit).toBe("sys/raw/*");
+  });
+
+  it("flags missing_sudo on every concrete root child", () => {
+    const { diagnostics } = parsePolicy(`
+path "sys/raw/a" { capabilities = ["read"] }
+path "sys/raw/b" { capabilities = ["read"] }
+path "sys/auth/approle" { capabilities = ["read"] }
+`);
+    const sudo = diagnostics.filter((d) => d.code === "missing_sudo");
+    expect(sudo.map((d) => d.path).sort()).toEqual([
+      "sys/auth/approle",
+      "sys/raw/a",
+      "sys/raw/b",
+    ]);
   });
 });

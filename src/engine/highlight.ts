@@ -30,7 +30,24 @@ function capabilitiesArrayRange(
   const lr = lineRange(source, fromLine);
   if (!lr) return null;
   const slice = source.slice(lr.start);
-  const m = slice.match(/capabilities\s*=\s*\[[\s\S]*?\]/);
+  // Stay inside this path block so we don't attach marks to a later block.
+  let depth = 0;
+  let seenBrace = false;
+  let blockEnd = slice.length;
+  for (let i = 0; i < slice.length; i++) {
+    const ch = slice[i];
+    if (ch === "{") {
+      depth++;
+      seenBrace = true;
+    } else if (ch === "}") {
+      depth--;
+      if (seenBrace && depth === 0) {
+        blockEnd = i;
+        break;
+      }
+    }
+  }
+  const m = slice.slice(0, blockEnd).match(/capabilities\s*=\s*\[[\s\S]*?\]/);
   if (!m || m.index === undefined) return null;
   return { start: lr.start + m.index, end: lr.start + m.index + m[0].length };
 }

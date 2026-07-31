@@ -7,6 +7,7 @@ import {
   type EngineId,
   type SysEndpoint,
 } from "./catalog";
+import { ruleTouchesRootProtected } from "./lint";
 
 export type { EngineId, EngineKind, EngineDef, SysEndpoint, SysEndpointGroup, ResourceKind } from "./catalog";
 export {
@@ -141,10 +142,48 @@ export interface BuildEnginePathsInput {
 }
 
 function sysCapsFor(ep: SysEndpoint, access: AccessLevel, custom?: Capability[]): Capability[] {
-  if (access === "deny") return ["deny"];
-  if (access === "custom") return custom ?? [];
-  if (access === "read") return [...ep.read];
-  return [...ep.write];
+  let caps: Capability[];
+  if (access === "deny") caps = ["deny"];
+  else if (access === "custom") caps = custom ?? [];
+  else if (access === "read") caps = [...ep.read];
+  else caps = [...ep.write];
+  if (ep.root && !caps.includes("deny") && !caps.includes("sudo")) {
+    caps = [...caps, "sudo"];
+  }
+  return caps;
+}
+
+/** One path segment: concrete name, or `+` when “all” (never mid-path `*`). */
+function namedOrPlus(name: string): string {
+  return !name || name === "*" ? "+" : name;
+}
+
+/**
+ * True when `under(mount, collection, name, scope)` already covers
+ * `collection/<name>/…` children (so a separate leaf rule would be redundant
+ * and/or force an illegal mid-path `*`).
+ */
+function prefixCoversLeaves(name: string, scope: "exact" | "prefix"): boolean {
+  return name === "*" || scope === "prefix";
+}
+
+function ensureSudoIfRootProtected(rule: GeneratorRule): GeneratorRule {
+  if (rule.capabilities.includes("deny") || rule.capabilities.includes("sudo")) return rule;
+  const hasSegmentWildcards =
+    rule.path === "+" || rule.path.includes("/+") || rule.path.startsWith("+/");
+  const isPrefix = rule.path.endsWith("*");
+  const matchPath = isPrefix && !hasSegmentWildcards ? rule.path.slice(0, -1) : rule.path;
+  const touches = ruleTouchesRootProtected({
+    path: rule.path,
+    matchPath,
+    capabilities: rule.capabilities,
+    isPrefix: isPrefix || (hasSegmentWildcards && isPrefix),
+    hasSegmentWildcards,
+    isTemplated: false,
+    line: 1,
+  });
+  if (!touches) return rule;
+  return { ...rule, capabilities: [...rule.capabilities, "sudo"] };
 }
 
 /**
@@ -193,6 +232,10 @@ export function relevantCapabilitiesForGenerator(input: {
 
 /** Build one or more path rules for the selected engine + access level. */
 export function buildEngineRules(input: BuildEnginePathsInput): GeneratorRule[] {
+  return buildEngineRulesRaw(input).map(ensureSudoIfRootProtected);
+}
+
+function buildEngineRulesRaw(input: BuildEnginePathsInput): GeneratorRule[] {
   const mount = (input.mount || getEngine(input.engine).defaultMount).replace(/^\/+|\/+$/g, "");
   const mode = input.resourceMode ?? "named";
   const name = resolveResourceName(input.secretPath, mode);
@@ -440,50 +483,47 @@ export function buildEngineRules(input: BuildEnginePathsInput): GeneratorRule[] 
     }
     case "gcp": {
       if (input.access === "read") {
-        const tokenPath =
-          name === "*"
-            ? joinMount(mount, "roleset", "*", "token")
-            : input.scope === "prefix"
-              ? joinMount(mount, "roleset", `${name}/*`, "token")
-              : joinMount(mount, "roleset", name, "token");
-        const keyPath =
-          name === "*"
-            ? joinMount(mount, "roleset", "*", "key")
-            : input.scope === "prefix"
-              ? joinMount(mount, "roleset", `${name}/*`, "key")
-              : joinMount(mount, "roleset", name, "key");
+        const n = namedOrPlus(name);
         return [
-          { path: tokenPath, capabilities: ["read"], comment: t("comment.gcp.token") },
-          { path: keyPath, capabilities: ["read"], comment: t("comment.gcp.key") },
+          {
+            path: joinMount(mount, "roleset", n, "token"),
+            capabilities: ["read"],
+            comment: t("comment.gcp.token"),
+          },
+          {
+            path: joinMount(mount, "roleset", n, "key"),
+            capabilities: ["read"],
+            comment: t("comment.gcp.key"),
+          },
         ];
       }
       if (input.access === "write") {
-        return withConfig(
+        const rules: GeneratorRule[] = withConfig(
           [
             {
               path: under(mount, "roleset", name, input.scope),
               capabilities: ["create", "read", "update", "delete", "list"],
               comment: t("comment.gcp.roleset"),
             },
+          ],
+          mount,
+        );
+        // Leaf token/key only when not already covered by roleset/<name>/*
+        if (!prefixCoversLeaves(name, input.scope)) {
+          rules.push(
             {
-              path:
-                name === "*"
-                  ? joinMount(mount, "roleset", "*", "token")
-                  : joinMount(mount, "roleset", name, "token"),
+              path: joinMount(mount, "roleset", name, "token"),
               capabilities: ["read"],
               comment: t("comment.gcp.token"),
             },
             {
-              path:
-                name === "*"
-                  ? joinMount(mount, "roleset", "*", "key")
-                  : joinMount(mount, "roleset", name, "key"),
+              path: joinMount(mount, "roleset", name, "key"),
               capabilities: ["read"],
               comment: t("comment.gcp.key"),
             },
-          ],
-          mount,
-        );
+          );
+        }
+        return rules;
       }
       return simpleCreds(mount, name, input.scope, caps, t("comment.gcp"));
     }
@@ -801,36 +841,31 @@ export function buildEngineRules(input: BuildEnginePathsInput): GeneratorRule[] 
       if (input.access === "read") {
         return [
           {
-            path:
-              name === "*"
-                ? joinMount(mount, "role", "*", "mintjwt")
-                : input.scope === "prefix"
-                  ? joinMount(mount, "role", `${name}/*`, "mintjwt")
-                  : joinMount(mount, "role", name, "mintjwt"),
+            path: joinMount(mount, "role", namedOrPlus(name), "mintjwt"),
             capabilities: ["update"],
             comment: t("comment.spiffe.mint"),
           },
         ];
       }
       if (input.access === "write") {
-        return withConfig(
+        const rules: GeneratorRule[] = withConfig(
           [
             {
               path: under(mount, "role", name, input.scope),
               capabilities: ["create", "read", "update", "delete", "list"],
               comment: t("comment.spiffe.role"),
             },
-            {
-              path:
-                name === "*"
-                  ? joinMount(mount, "role", "*", "mintjwt")
-                  : joinMount(mount, "role", name, "mintjwt"),
-              capabilities: ["update"],
-              comment: t("comment.spiffe.mint"),
-            },
           ],
           mount,
         );
+        if (!prefixCoversLeaves(name, input.scope)) {
+          rules.push({
+            path: joinMount(mount, "role", name, "mintjwt"),
+            capabilities: ["update"],
+            comment: t("comment.spiffe.mint"),
+          });
+        }
+        return rules;
       }
       return [
         {
@@ -895,8 +930,8 @@ export function buildEngineRules(input: BuildEnginePathsInput): GeneratorRule[] 
           {
             path:
               name === "*"
-                ? `${joinMount(mount, "scope")}/*/role/*/credential/*`
-                : `${joinMount(mount, "scope", name)}/role/*/credential/*`,
+                ? `${joinMount(mount, "scope")}/+/role/+/credential/*`
+                : `${joinMount(mount, "scope", name)}/role/+/credential/*`,
             capabilities: ["create", "read", "update"],
             comment: t("comment.kmip.creds"),
           },
@@ -912,7 +947,7 @@ export function buildEngineRules(input: BuildEnginePathsInput): GeneratorRule[] 
           {
             path:
               name === "*"
-                ? `${joinMount(mount, "scope")}/*/role/*`
+                ? `${joinMount(mount, "scope")}/+/role/*`
                 : `${joinMount(mount, "scope", name)}/role/*`,
             capabilities: ["create", "read", "update", "delete", "list"],
             comment: t("comment.kmip.role"),
@@ -934,10 +969,6 @@ export function buildEngineRules(input: BuildEnginePathsInput): GeneratorRule[] 
     // ——— Auth methods (mounted under auth/<mount>/) ———
     case "approle": {
       const m = authMount(mount);
-      const secretIdPath =
-        name === "*"
-          ? `${joinMount(m, "role")}/*/secret-id`
-          : `${under(m, "role", name, input.scope)}/secret-id`;
       if (input.access === "read") {
         return [
           {
@@ -948,23 +979,27 @@ export function buildEngineRules(input: BuildEnginePathsInput): GeneratorRule[] 
         ];
       }
       if (input.access === "write") {
-        return [
+        const rules: GeneratorRule[] = [
           {
             path: under(m, "role", name, input.scope),
             capabilities: ["create", "read", "update", "delete", "list"],
             comment: t("comment.approle.role"),
           },
-          {
-            path: secretIdPath,
+        ];
+        // role/<name>/* already covers …/secret-id; only emit a leaf when exact.
+        if (!prefixCoversLeaves(name, input.scope)) {
+          rules.push({
+            path: joinMount(m, "role", name, "secret-id"),
             capabilities: ["create", "read", "update", "list"],
             comment: t("comment.approle.secretId"),
-          },
-          {
-            path: joinMount(m, "login"),
-            capabilities: ["create", "update"],
-            comment: t("comment.approle.login"),
-          },
-        ];
+          });
+        }
+        rules.push({
+          path: joinMount(m, "login"),
+          capabilities: ["create", "update"],
+          comment: t("comment.approle.login"),
+        });
+        return rules;
       }
       return [
         {

@@ -226,7 +226,12 @@ function renderDiagnostics(diags: Diagnostic[]): string {
     return `<div class="empty">${escapeHtml(t("diag.empty"))}</div>`;
   }
   const order = { error: 0, warning: 1, info: 2 } as const;
-  const sorted = [...diags].sort((a, b) => order[a.severity] - order[b.severity]);
+  const sorted = [...diags].sort(
+    (a, b) =>
+      order[a.severity] - order[b.severity] ||
+      (a.line ?? 0) - (b.line ?? 0) ||
+      a.code.localeCompare(b.code),
+  );
   return sorted
     .map(
       (d) => `

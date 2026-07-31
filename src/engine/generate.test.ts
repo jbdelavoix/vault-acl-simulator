@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildEngineRules, ENGINES, SYS_ENDPOINTS, getSysEndpoint } from "./generate";
+import { parsePolicy } from "./parse";
 
 describe("generator catalog", () => {
   it("covers builtin secrets + auth kinds", () => {
@@ -245,5 +246,62 @@ describe("generator catalog", () => {
     expect(getSysEndpoint("identity-scim").beta).toBe(true);
     expect(getSysEndpoint("identity-scim").enterprise).toBe(true);
     expect(SYS_ENDPOINTS.every((e) => e.doc.trim().split("\n").length >= 3)).toBe(true);
+  });
+
+  it("emits no parse errors/warnings for representative engines", () => {
+    const samples: Array<Parameters<typeof buildEngineRules>[0]> = [
+      { engine: "kv2", mount: "secret", secretPath: "apps/x", access: "write", scope: "prefix" },
+      { engine: "gcp", mount: "gcp", secretPath: "my-roleset", access: "read", scope: "prefix", resourceMode: "named" },
+      { engine: "gcp", mount: "gcp", secretPath: "x", access: "read", scope: "exact", resourceMode: "all" },
+      { engine: "gcp", mount: "gcp", secretPath: "my-roleset", access: "write", scope: "prefix" },
+      { engine: "approle", mount: "approle", secretPath: "ci", access: "write", scope: "prefix" },
+      { engine: "approle", mount: "approle", secretPath: "ci", access: "write", scope: "exact" },
+      { engine: "kmip", mount: "kmip", secretPath: "scope1", access: "read", scope: "exact" },
+      { engine: "spiffe", mount: "spiffe", secretPath: "role1", access: "read", scope: "prefix" },
+      { engine: "token", mount: "token", secretPath: "create", access: "write", scope: "exact" },
+      { engine: "sys", mount: "sys", secretPath: "", access: "write", scope: "exact", sysEndpointIds: ["rotate", "mounts-path", "auth-manage", "policy"] },
+    ];
+    for (const input of samples) {
+      const rules = buildEngineRules(input);
+      const hcl = rules
+        .map(
+          (r) =>
+            `path "${r.path}" {\n  capabilities = [${r.capabilities.map((c) => `"${c}"`).join(", ")}]\n}\n`,
+        )
+        .join("\n");
+      const { diagnostics } = parsePolicy(hcl);
+      const bad = diagnostics.filter((d) => d.severity === "error" || d.severity === "warning");
+      expect(bad, `${input.engine}: ${bad.map((d) => `${d.code}:${d.path}`).join(", ")}`).toEqual([]);
+    }
+  });
+
+  it("uses + not mid-path * for gcp / kmip / spiffe / approle all-resources", () => {
+    const gcp = buildEngineRules({
+      engine: "gcp",
+      mount: "gcp",
+      secretPath: "x",
+      access: "read",
+      scope: "exact",
+      resourceMode: "all",
+    });
+    expect(gcp.map((r) => r.path)).toEqual(["gcp/roleset/+/token", "gcp/roleset/+/key"]);
+    const kmip = buildEngineRules({
+      engine: "kmip",
+      mount: "kmip",
+      secretPath: "x",
+      access: "read",
+      scope: "exact",
+      resourceMode: "all",
+    });
+    expect(kmip[0].path).toBe("kmip/scope/+/role/+/credential/*");
+    const spiffe = buildEngineRules({
+      engine: "spiffe",
+      mount: "spiffe",
+      secretPath: "x",
+      access: "read",
+      scope: "exact",
+      resourceMode: "all",
+    });
+    expect(spiffe[0].path).toBe("spiffe/role/+/mintjwt");
   });
 });
