@@ -1590,12 +1590,24 @@ async function mount() {
   }
 
   let syncUrlGen = 0;
-  async function syncUrl() {
+  /** Returns the shareable URL (always includes `#s=…` when encoding succeeds). */
+  async function syncUrl(): Promise<string> {
     const gen = ++syncUrlGen;
-    const payload = await encodeState({ p: policyEl.value, t: pathsEl.value, c: filterCap });
-    if (gen !== syncUrlGen) return;
-    const next = `#s=${payload}`;
-    if (location.hash !== next) history.replaceState(null, "", next);
+    const base = `${location.origin}${location.pathname}${location.search}`;
+    try {
+      const payload = await encodeState({ p: policyEl.value, t: pathsEl.value, c: filterCap });
+      if (gen !== syncUrlGen) return location.href;
+      const hash = `#s=${payload}`;
+      const url = `${base}${hash}`;
+      if (location.hash !== hash) {
+        // Use path + hash (not hash-only): more reliable on project Pages base paths.
+        history.replaceState(null, "", `${location.pathname}${location.search}${hash}`);
+      }
+      return url;
+    } catch (err) {
+      console.warn("Failed to sync URL state", err);
+      return location.href;
+    }
   }
 
   function jumpToLine(line: number) {
@@ -1805,11 +1817,14 @@ async function mount() {
   });
 
   app.querySelector("#share-btn")!.addEventListener("click", async () => {
-    await syncUrl();
-    const url = location.href;
+    const url = await syncUrl();
     const shareBtn = app.querySelector<HTMLButtonElement>("#share-btn")!;
     try {
-      await navigator.clipboard.writeText(url);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        throw new Error("clipboard unavailable");
+      }
       shareBtn.textContent = t("share.copied");
       setTimeout(() => {
         shareBtn.textContent = t("share");

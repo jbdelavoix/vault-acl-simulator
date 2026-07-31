@@ -1,4 +1,4 @@
-/** Shared URL hash state: brotli + base64url. */
+/** Shared URL hash state: gzip-compressed JSON in `#s=g1.…`. */
 
 export type UrlState = {
   p?: string;
@@ -6,17 +6,17 @@ export type UrlState = {
   c?: string;
 };
 
-async function brotliCompress(bytes: Uint8Array): Promise<Uint8Array> {
+async function gzipCompress(bytes: Uint8Array): Promise<Uint8Array> {
   const stream = new Blob([new Uint8Array(bytes)])
     .stream()
-    .pipeThrough(new CompressionStream("brotli" as CompressionFormat));
+    .pipeThrough(new CompressionStream("gzip"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-async function brotliDecompress(bytes: Uint8Array): Promise<Uint8Array> {
+async function gzipDecompress(bytes: Uint8Array): Promise<Uint8Array> {
   const stream = new Blob([new Uint8Array(bytes)])
     .stream()
-    .pipeThrough(new DecompressionStream("brotli" as CompressionFormat));
+    .pipeThrough(new DecompressionStream("gzip"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
@@ -35,12 +35,13 @@ function base64UrlToBytes(encoded: string): Uint8Array {
 
 export async function encodeState(obj: unknown): Promise<string> {
   const json = new TextEncoder().encode(JSON.stringify(obj));
-  return bytesToBase64Url(await brotliCompress(json));
+  return `g1.${bytesToBase64Url(await gzipCompress(json))}`;
 }
 
 export async function decodeState(encoded: string): Promise<UrlState | null> {
   try {
-    const raw = await brotliDecompress(base64UrlToBytes(encoded));
+    if (!encoded.startsWith("g1.")) return null;
+    const raw = await gzipDecompress(base64UrlToBytes(encoded.slice(3)));
     return JSON.parse(new TextDecoder().decode(raw)) as UrlState;
   } catch {
     return null;
