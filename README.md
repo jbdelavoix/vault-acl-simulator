@@ -53,8 +53,18 @@ npm test
 
 The site is published with **GitHub Pages** via `.github/workflows/pages.yml`:
 
-- on every push / PR: `npm ci` → `npm test` → `npm run build`
-- on push to `main` / `master`: deploy `dist/` to GitHub Pages
+- on every push / PR: `npm ci` → `npm test` → Pages build + portable zip → package zip/sha256
+- on push to `main` / `master`: deploy `dist/` to GitHub Pages **and** create a GitHub Release tagged with the short commit SHA, attaching `vault-acl-simu-<sha>.zip` + `.sha256`
+- PRs still upload the zip/checksum as a workflow artifact (no Release)
+
+The top bar shows `package.json` version · git short SHA (links to the commit). On deployed builds, **zip** / **sha256** link to that Release’s assets for offline use.
+
+Local package:
+
+```bash
+BASE_PATH=/ VITE_GIT_SHA=$(git rev-parse HEAD) npx vite build --outDir dist-portable
+npm run package:release
+```
 
 In the GitHub repo settings, set **Pages → Source** to **GitHub Actions**.
 

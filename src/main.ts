@@ -534,12 +534,48 @@ sys/policies/acl/new-policy
 async function mount() {
   initLocale();
 
+  const buildShaShort = __GIT_SHA_SHORT__;
+  const buildSha = __GIT_SHA__;
+  const buildVersion = __APP_VERSION__;
+  const buildRepo = __GITHUB_REPOSITORY__;
+  const buildCommitHref = buildRepo && buildSha !== "unknown"
+    ? `https://github.com/${buildRepo}/commit/${buildSha}`
+    : "";
+  // Offline zip is published as a GitHub Release asset (tag = short SHA).
+  const releaseTag = buildShaShort;
+  const zipName = `vault-acl-simu-${buildShaShort}.zip`;
+  const shaName = `${zipName}.sha256`;
+  const releaseBase =
+    buildRepo && buildSha !== "unknown"
+      ? `https://github.com/${buildRepo}/releases/download/${releaseTag}`
+      : "";
+  const zipHref = releaseBase ? `${releaseBase}/${zipName}` : "";
+  const shaHref = releaseBase ? `${releaseBase}/${shaName}` : "";
+  const showDownloads = Boolean(releaseBase);
+
   const app = document.querySelector<HTMLDivElement>("#app")!;
   app.innerHTML = `
     <header class="topbar">
       <div class="brand">
-        <h1>Vault ACL Simulator</h1>
-        <span data-i18n="app.tagline"></span>
+        <div class="brand-text">
+          <h1>Vault ACL Simulator</h1>
+          <span data-i18n="app.tagline"></span>
+        </div>
+        <div class="build-meta" title="${escapeHtml(buildSha)}">
+          ${
+            buildCommitHref
+              ? `<a class="build-sha" href="${escapeHtml(buildCommitHref)}" target="_blank" rel="noopener noreferrer">${escapeHtml(buildVersion)} · ${escapeHtml(buildShaShort)}</a>`
+              : `<span class="build-sha">${escapeHtml(buildVersion)} · ${escapeHtml(buildShaShort)}</span>`
+          }
+          ${
+            showDownloads
+              ? `<span class="build-sep" aria-hidden="true">·</span>
+                 <a class="build-dl" href="${escapeHtml(zipHref)}" data-i18n="app.downloadZip">zip</a>
+                 <span class="build-sep" aria-hidden="true">·</span>
+                 <a class="build-dl" href="${escapeHtml(shaHref)}" data-i18n="app.downloadSha">sha256</a>`
+              : ""
+          }
+        </div>
       </div>
       <nav class="tabs" role="tablist" aria-label="Navigation">
         <button type="button" class="tab active" role="tab" aria-selected="true" data-tab="sim" data-i18n="tab.sim"></button>

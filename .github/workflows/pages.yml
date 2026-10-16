@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -34,11 +34,58 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Build
+      - name: Build (Pages)
         run: npm run build
         env:
           # Project Pages URL: https://<user>.github.io/<repo>/
           BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_GIT_SHA: ${{ github.sha }}
+          VITE_GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: Build (portable zip)
+        run: npx vite build --outDir dist-portable
+        env:
+          BASE_PATH: /
+          VITE_GIT_SHA: ${{ github.sha }}
+          VITE_GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: Package zip + sha256
+        run: npm run package:release
+        env:
+          VITE_GIT_SHA: ${{ github.sha }}
+
+      - name: Upload release files (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: vault-acl-simu-${{ github.sha }}
+          path: |
+            release/vault-acl-simu-*.zip
+            release/vault-acl-simu-*.zip.sha256
+            release/version.json
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHORT="${GITHUB_SHA:0:7}"
+          NOTES="Offline build from [\`${GITHUB_SHA}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}).
+
+          | File | Purpose |
+          | --- | --- |
+          | \`vault-acl-simu-${SHORT}.zip\` | Portable static site (\`BASE_PATH=/\`) |
+          | \`vault-acl-simu-${SHORT}.zip.sha256\` | SHA-256 checksum |"
+          # Re-run on the same short SHA (force-push / rebuild): replace the release.
+          if gh release view "$SHORT" >/dev/null 2>&1; then
+            gh release delete "$SHORT" --yes --cleanup-tag
+          fi
+          gh release create "$SHORT" \
+            --title "vault-acl-simu ${SHORT}" \
+            --notes "$NOTES" \
+            --latest \
+            release/vault-acl-simu-"${SHORT}".zip \
+            release/vault-acl-simu-"${SHORT}".zip.sha256
 
       - name: Upload Pages artifact
         if: github.event_name != 'pull_request'

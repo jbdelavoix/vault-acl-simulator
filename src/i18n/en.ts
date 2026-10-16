@@ -3,6 +3,9 @@ import type { Dict } from "./types";
 /** Shared UI + diagnostic + engine strings. Keys are stable across locales. */
 export const en: Dict = {
   "app.tagline": "validate · diagnose · match like Vault",
+  "app.build": "build {sha}",
+  "app.downloadZip": "zip",
+  "app.downloadSha": "sha256",
   "tab.sim": "Simulator",
   "tab.gen": "Generator",
   "tab.doc": "Docs",
