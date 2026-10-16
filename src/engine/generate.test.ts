@@ -14,13 +14,16 @@ describe("generator catalog", () => {
   });
 
   it("exposes a curated sys endpoint catalog", () => {
-    expect(SYS_ENDPOINTS.length).toBeGreaterThan(80);
+    expect(SYS_ENDPOINTS.length).toBeGreaterThan(150);
     expect(SYS_ENDPOINTS.some((e) => e.path === "sys/rotate" && e.root)).toBe(true);
     expect(SYS_ENDPOINTS.some((e) => e.path.startsWith("identity/") && e.group === "identity")).toBe(
       true,
     );
     expect(SYS_ENDPOINTS.some((e) => e.path.includes("replication/dr") && e.enterprise)).toBe(true);
     expect(SYS_ENDPOINTS.some((e) => e.path === "sys/policies/rgp/*" && e.enterprise)).toBe(true);
+    expect(SYS_ENDPOINTS.some((e) => e.path === "sys/plugins/pins/*/*")).toBe(true);
+    expect(SYS_ENDPOINTS.some((e) => e.path === "sys/policies/rotation/*" && e.enterprise)).toBe(true);
+    expect(SYS_ENDPOINTS.some((e) => e.path.startsWith("identity/tpm"))).toBe(true);
     expect(SYS_ENDPOINTS.some((e) => e.id === "custom")).toBe(true);
   });
 
